@@ -1,7 +1,11 @@
 package se.irori.kafka.claimcheck.s3;
 
+import com.amazonaws.auth.AWSCredentialsProvider;
 import com.amazonaws.auth.AWSStaticCredentialsProvider;
+import com.amazonaws.auth.AnonymousAWSCredentials;
 import com.amazonaws.auth.BasicAWSCredentials;
+import com.amazonaws.auth.DefaultAWSCredentialsProviderChain;
+import com.amazonaws.auth.profile.ProfileCredentialsProvider;
 import com.amazonaws.client.builder.AwsClientBuilder;
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3ClientBuilder;
@@ -19,6 +23,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.errors.KafkaStorageException;
 import se.irori.kafka.claimcheck.ClaimCheck;
 import se.irori.kafka.claimcheck.ClaimCheckBackend;
@@ -113,11 +118,7 @@ public class S3StorageClaimCheckBackend implements ClaimCheckBackend {
       builder.withRegion(region);
     }
 
-    String accessKey = config.getString(Keys.S3_ACCESS_KEY_CONFIG);
-    if (accessKey != null) {
-      builder.withCredentials(new AWSStaticCredentialsProvider(new BasicAWSCredentials(
-          accessKey, config.getPassword(Keys.S3_SECRET_KEY_CONFIG).value())));
-    }
+    builder.withCredentials(buildCredentialsProvider(config));
 
     s3client = builder.build();
   }
@@ -126,6 +127,32 @@ public class S3StorageClaimCheckBackend implements ClaimCheckBackend {
   public void close() {
     if (s3client != null) {
       s3client.shutdown();
+    }
+  }
+
+  private static AWSCredentialsProvider buildCredentialsProvider(S3ClaimCheckConfig config) {
+    switch (config.getCredentialsProviderType()) {
+      case STATIC:
+        return new AWSStaticCredentialsProvider(new BasicAWSCredentials(
+            config.getString(Keys.S3_ACCESS_KEY_CONFIG),
+            config.getPassword(Keys.S3_SECRET_KEY_CONFIG).value()));
+      case PROFILE:
+        String profile = config.getString(Keys.S3_PROFILE_NAME_CONFIG);
+        return profile == null ? new ProfileCredentialsProvider()
+            : new ProfileCredentialsProvider(profile);
+      case ANONYMOUS:
+        return new AWSStaticCredentialsProvider(new AnonymousAWSCredentials());
+      case CUSTOM:
+        String className = config.getString(Keys.S3_CREDENTIALS_PROVIDER_CONFIG).trim();
+        try {
+          return (AWSCredentialsProvider) Class.forName(className)
+              .getDeclaredConstructor().newInstance();
+        } catch (ReflectiveOperationException e) {
+          throw new ConfigException("Could not instantiate credentials provider " + className
+              + ", it needs a public no-arg constructor", e);
+        }
+      default:
+        return DefaultAWSCredentialsProviderChain.getInstance();
     }
   }
 

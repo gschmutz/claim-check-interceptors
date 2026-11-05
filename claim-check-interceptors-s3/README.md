@@ -31,6 +31,18 @@ web identity (EKS IRSA), shared profile, ECS container and EC2 instance credenti
 roles on AWS. To keep secrets out of properties files, use a Kafka `ConfigProvider`, e.g.
 `s3.secret.key=${env:S3_SECRET_KEY}`.
 
+## Credentials
+
+Avoid putting secrets in plain client properties where possible:
+
+* `default` (the default when no keys are set) uses the AWS provider chain, so IAM roles
+  (EKS IRSA, ECS task roles, EC2 instance profiles), `AWS_*` environment variables and shared
+  profiles work without any secret in the Kafka config.
+* `profile` selects a named profile from `~/.aws/credentials`.
+* For `static`, use a Kafka `ConfigProvider` so the secret is resolved at runtime, e.g.
+  `s3.secret.key=${env:S3_SECRET_KEY}` or `${file:/etc/secrets/s3.properties:secret}` (requires
+  `config.providers=env,file` and the corresponding provider classes configured on the client).
+
 ## Object expiry
 
 Use an S3 lifecycle rule on the bucket to expire claim check objects, for example after 14 days.

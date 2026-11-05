@@ -56,4 +56,63 @@ public class S3ClaimCheckConfigTest {
 
     S3ClaimCheckConfig.validatedConfig(config);
   }
+
+  private static Map<String, String> cfg(String... kv) {
+    Map<String, String> m = new HashMap<>();
+    for (int i = 0; i < kv.length; i += 2) {
+      m.put(kv[i], kv[i + 1]);
+    }
+    return m;
+  }
+
+  @Test
+  public void testProviderDerivedFromSettings() {
+    assertEquals(S3ClaimCheckConfig.CredentialsProviderType.DEFAULT,
+        S3ClaimCheckConfig.validatedConfig(cfg()).getCredentialsProviderType());
+    assertEquals(S3ClaimCheckConfig.CredentialsProviderType.STATIC,
+        S3ClaimCheckConfig.validatedConfig(cfg(Keys.S3_ACCESS_KEY_CONFIG, "a",
+            Keys.S3_SECRET_KEY_CONFIG, "s")).getCredentialsProviderType());
+    assertEquals(S3ClaimCheckConfig.CredentialsProviderType.PROFILE,
+        S3ClaimCheckConfig.validatedConfig(cfg(Keys.S3_PROFILE_NAME_CONFIG, "dev"))
+            .getCredentialsProviderType());
+  }
+
+  @Test
+  public void testExplicitProviders() {
+    for (String p : new String[] {"default", "PROFILE", "anonymous"}) {
+      S3ClaimCheckConfig.validatedConfig(cfg(Keys.S3_CREDENTIALS_PROVIDER_CONFIG, p));
+    }
+    assertEquals(S3ClaimCheckConfig.CredentialsProviderType.CUSTOM,
+        S3ClaimCheckConfig.validatedConfig(cfg(Keys.S3_CREDENTIALS_PROVIDER_CONFIG,
+            "com.amazonaws.auth.EnvironmentVariableCredentialsProvider"))
+            .getCredentialsProviderType());
+  }
+
+  @Test(expected = ConfigException.class)
+  public void testStaticWithoutKeysError() {
+    S3ClaimCheckConfig.validatedConfig(cfg(Keys.S3_CREDENTIALS_PROVIDER_CONFIG, "static"));
+  }
+
+  @Test(expected = ConfigException.class)
+  public void testKeysWithNonStaticProviderError() {
+    S3ClaimCheckConfig.validatedConfig(cfg(Keys.S3_CREDENTIALS_PROVIDER_CONFIG, "default",
+        Keys.S3_ACCESS_KEY_CONFIG, "a", Keys.S3_SECRET_KEY_CONFIG, "s"));
+  }
+
+  @Test(expected = ConfigException.class)
+  public void testProfileNameWithOtherProviderError() {
+    S3ClaimCheckConfig.validatedConfig(cfg(Keys.S3_CREDENTIALS_PROVIDER_CONFIG, "anonymous",
+        Keys.S3_PROFILE_NAME_CONFIG, "dev"));
+  }
+
+  @Test(expected = ConfigException.class)
+  public void testUnknownProviderClassError() {
+    S3ClaimCheckConfig.validatedConfig(cfg(Keys.S3_CREDENTIALS_PROVIDER_CONFIG, "no.such.Class"));
+  }
+
+  @Test(expected = ConfigException.class)
+  public void testProviderClassWrongTypeError() {
+    S3ClaimCheckConfig.validatedConfig(cfg(Keys.S3_CREDENTIALS_PROVIDER_CONFIG,
+        "java.lang.String"));
+  }
 }

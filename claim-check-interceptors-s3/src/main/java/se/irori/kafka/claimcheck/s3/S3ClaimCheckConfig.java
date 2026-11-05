@@ -3,9 +3,11 @@ package se.irori.kafka.claimcheck.s3;
 import static se.irori.kafka.claimcheck.s3.S3ClaimCheckConfig.Keys.S3_ACCESS_KEY_CONFIG;
 import static se.irori.kafka.claimcheck.s3.S3ClaimCheckConfig.Keys.S3_BUCKET_NAME_CONFIG;
 import static se.irori.kafka.claimcheck.s3.S3ClaimCheckConfig.Keys.S3_CREATE_BUCKET_IF_NOT_EXISTS;
+import static se.irori.kafka.claimcheck.s3.S3ClaimCheckConfig.Keys.S3_CREDENTIALS_PROVIDER_CONFIG;
 import static se.irori.kafka.claimcheck.s3.S3ClaimCheckConfig.Keys.S3_OBJECT_PREFIX_CONFIG;
 import static se.irori.kafka.claimcheck.s3.S3ClaimCheckConfig.Keys.S3_PARTITION_GRANULARITY_CONFIG;
 import static se.irori.kafka.claimcheck.s3.S3ClaimCheckConfig.Keys.S3_PATH_STYLE_ACCESS_CONFIG;
+import static se.irori.kafka.claimcheck.s3.S3ClaimCheckConfig.Keys.S3_PROFILE_NAME_CONFIG;
 import static se.irori.kafka.claimcheck.s3.S3ClaimCheckConfig.Keys.S3_REGION_CONFIG;
 import static se.irori.kafka.claimcheck.s3.S3ClaimCheckConfig.Keys.S3_SECRET_KEY_CONFIG;
 import static se.irori.kafka.claimcheck.s3.S3ClaimCheckConfig.Keys.S3_SERVICE_ENDPOINT_CONFIG;
@@ -49,8 +51,21 @@ public class S3ClaimCheckConfig extends AbstractConfig {
 
   public static final String REGION_DOCS = "S3 signing region.";
 
-  public static final String ACCESS_KEY_DOCS = "S3 access key. If not set (together with `"
-      + S3_SECRET_KEY_CONFIG + "`), the AWS default credentials provider chain is used.";
+  public static final String CREDENTIALS_PROVIDER_DOCS = "How to obtain S3 credentials. One of"
+      + " `static` (use `" + S3_ACCESS_KEY_CONFIG + "` and `" + S3_SECRET_KEY_CONFIG + "`),"
+      + " `default` (AWS default provider chain: environment, system properties, web identity,"
+      + " shared profile, container and instance profile credentials), `profile` (named profile"
+      + " from the shared credentials file, see `" + S3_PROFILE_NAME_CONFIG + "`), `anonymous`,"
+      + " or the fully qualified name of a custom `com.amazonaws.auth.AWSCredentialsProvider`"
+      + " class with a public no-arg constructor. If not set: `static` when an access key is"
+      + " configured, `profile` when a profile name is configured, otherwise `default`.";
+
+  public static final String PROFILE_NAME_DOCS = "Name of the profile in the shared AWS"
+      + " credentials file (`~/.aws/credentials`) to use with the `profile` credentials provider."
+      + " If not set, the default profile is used.";
+
+  public static final String ACCESS_KEY_DOCS = "S3 access key, used with the `static`"
+      + " credentials provider.";
 
   public static final String SECRET_KEY_DOCS = "S3 secret key. Must be set together with `"
       + S3_ACCESS_KEY_CONFIG + "`.";
@@ -60,6 +75,11 @@ public class S3ClaimCheckConfig extends AbstractConfig {
 
   public static final String CREATE_BUCKET_DOCS = "Create the bucket if it does not exist."
       + " Requires bucket creation permissions.";
+
+  /** Supported credentials providers. Anything else is treated as a custom provider class. */
+  enum CredentialsProviderType {
+    STATIC, DEFAULT, PROFILE, ANONYMOUS, CUSTOM
+  }
 
   /** Supported time based partition granularities. */
   enum PartitionGranularity {
@@ -87,6 +107,12 @@ public class S3ClaimCheckConfig extends AbstractConfig {
 
     base.define(S3_REGION_CONFIG, ConfigDef.Type.STRING, "us-east-1",
         ConfigDef.Importance.MEDIUM, REGION_DOCS);
+
+    base.define(S3_CREDENTIALS_PROVIDER_CONFIG, ConfigDef.Type.STRING, null,
+        ConfigDef.Importance.MEDIUM, CREDENTIALS_PROVIDER_DOCS);
+
+    base.define(S3_PROFILE_NAME_CONFIG, ConfigDef.Type.STRING, null,
+        ConfigDef.Importance.LOW, PROFILE_NAME_DOCS);
 
     base.define(S3_ACCESS_KEY_CONFIG, ConfigDef.Type.STRING, null,
         ConfigDef.Importance.MEDIUM, ACCESS_KEY_DOCS);
@@ -150,6 +176,61 @@ public class S3ClaimCheckConfig extends AbstractConfig {
           + getString(S3_PARTITION_GRANULARITY_CONFIG) + "', expected one of "
           + Arrays.toString(PartitionGranularity.values()).toLowerCase(Locale.ROOT));
     }
+
+    CredentialsProviderType type = getCredentialsProviderType();
+    if (type == CredentialsProviderType.STATIC && !hasAccessKey) {
+      throw new ConfigException("Credentials provider 'static' requires '"
+          + S3_ACCESS_KEY_CONFIG + "' and '" + S3_SECRET_KEY_CONFIG + "'");
+    }
+    if (type != CredentialsProviderType.STATIC && hasAccessKey) {
+      throw new ConfigException("'" + S3_ACCESS_KEY_CONFIG + "' and '" + S3_SECRET_KEY_CONFIG
+          + "' can only be used with the 'static' credentials provider");
+    }
+    if (type != CredentialsProviderType.PROFILE && getString(S3_PROFILE_NAME_CONFIG) != null) {
+      throw new ConfigException("'" + S3_PROFILE_NAME_CONFIG
+          + "' can only be used with the 'profile' credentials provider");
+    }
+    if (type == CredentialsProviderType.CUSTOM) {
+      validateCustomProviderClass(getString(S3_CREDENTIALS_PROVIDER_CONFIG).trim());
+    }
+  }
+
+  private static void validateCustomProviderClass(String className) {
+    try {
+      Class<?> clazz = Class.forName(className);
+      if (!AWSCredentialsProvider.class.isAssignableFrom(clazz)) {
+        throw new ConfigException("Credentials provider class " + className
+            + " does not implement " + AWSCredentialsProvider.class.getName());
+      }
+    } catch (ClassNotFoundException e) {
+      throw new ConfigException("Invalid " + S3_CREDENTIALS_PROVIDER_CONFIG + ": '" + className
+          + "' is not one of static, default, profile, anonymous, and no such class was found");
+    }
+  }
+
+  /**
+   * Get the effective credentials provider type, deriving it from the other settings if
+   * {@code s3.credentials.provider} is not set.
+   *
+   * @return the credentials provider type
+   */
+  CredentialsProviderType getCredentialsProviderType() {
+    String configured = getString(S3_CREDENTIALS_PROVIDER_CONFIG);
+    if (configured == null || configured.trim().isEmpty()) {
+      if (getString(S3_ACCESS_KEY_CONFIG) != null) {
+        return CredentialsProviderType.STATIC;
+      }
+      return getString(S3_PROFILE_NAME_CONFIG) != null
+          ? CredentialsProviderType.PROFILE : CredentialsProviderType.DEFAULT;
+    }
+    try {
+      CredentialsProviderType type =
+          CredentialsProviderType.valueOf(configured.trim().toUpperCase(Locale.ROOT));
+      return type == CredentialsProviderType.CUSTOM
+          ? CredentialsProviderType.DEFAULT : type;
+    } catch (IllegalArgumentException e) {
+      return CredentialsProviderType.CUSTOM;
+    }
   }
 
   /**
@@ -171,6 +252,10 @@ public class S3ClaimCheckConfig extends AbstractConfig {
     public static final String S3_SERVICE_ENDPOINT_CONFIG = "s3.service.endpoint";
 
     public static final String S3_REGION_CONFIG = "s3.region";
+
+    public static final String S3_CREDENTIALS_PROVIDER_CONFIG = "s3.credentials.provider";
+
+    public static final String S3_PROFILE_NAME_CONFIG = "s3.profile.name";
 
     public static final String S3_ACCESS_KEY_CONFIG = "s3.access.key";
 
