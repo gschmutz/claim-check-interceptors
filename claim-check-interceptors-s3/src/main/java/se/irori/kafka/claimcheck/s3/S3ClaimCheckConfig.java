@@ -14,6 +14,7 @@ import static se.irori.kafka.claimcheck.s3.S3ClaimCheckConfig.Keys.S3_SERVICE_EN
 import static se.irori.kafka.claimcheck.s3.S3ClaimCheckConfig.Keys.S3_TOPIC_TRANSFORM_REGEX_CONFIG;
 import static se.irori.kafka.claimcheck.s3.S3ClaimCheckConfig.Keys.S3_TOPIC_TRANSFORM_REPLACEMENT_CONFIG;
 
+import com.amazonaws.auth.AWSCredentialsProvider;
 import java.util.Arrays;
 import java.util.Locale;
 import java.util.Map;
