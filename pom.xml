@@ -17,13 +17,13 @@
     apply the Claim check pattern, where large messages are stored in a separate datastore, and
     a reference is kept as a Kafka header.
 
-    Currently an Azure Blob Storage backend is implemented.
+    Currently an S3 (AWS S3 / MinIO) backend is implemented.
   </description>
   <url>https://github.com/irori-ab/claim-check-interceptors</url>
 
   <modules>
     <module>claim-check-interceptors-core</module>
-    <module>claim-check-interceptors-azure</module>
+    <module>claim-check-interceptors-s3</module>
     <module>claim-check-test-tools</module>
 
   </modules>
